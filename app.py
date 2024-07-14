@@ -1,97 +1,62 @@
+from flask import Flask, request, render_template, jsonify
+from flask_cors import CORS  # Import CORS from flask_cors
 import os
-from flask import Flask, render_template, request, redirect, url_for
-import speech_recognition as sr
-import nltk
-from nltk.tokenize import sent_tokenize
-from nltk.corpus import stopwords
-from pydub import AudioSegment
+import torch
+import librosa
+import numpy as np
+from scipy.io import wavfile
+from transformers import Wav2Vec2ForCTC, Wav2Vec2Tokenizer
+from googletrans import Translator
 
-nltk.download('punkt')
-
+# Initialize Flask app
 app = Flask(__name__)
+CORS(app)  # Enable CORS for the entire app
 app.config['UPLOAD_FOLDER'] = 'uploads'
 
-def convert_mp3_to_wav(mp3_file):
-    # Load MP3 file using pydub
-    audio = AudioSegment.from_mp3(mp3_file)
-    # Export as WAV
-    wav_file = mp3_file[:-4] + '.wav'  # Assuming mp3_file ends with '.mp3'
-    audio.export(wav_file, format="wav")
-    return wav_file
+# Load Wav2Vec2 model and tokenizer
+tokenizer = Wav2Vec2Tokenizer.from_pretrained("facebook/wav2vec2-base-960h")
+model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-base-960h")
 
-def summarize_text(text):
-    stop_words = set(stopwords.words('english'))
-    words = nltk.word_tokenize(text)
-    freq_table = dict()
+# Initialize Translator
+translator = Translator()
 
-    for word in words:
-        word = word.lower()
-        if word in stop_words:
-            continue
-        if word in freq_table:
-            freq_table[word] += 1
+# Route to upload audio file
+@app.route('/upload', methods=['GET', 'POST'])
+def upload_file():
+    if request.method == 'POST':
+        file = request.files['file']
+        if file:
+            filename = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+            file.save(filename)
+            return jsonify({'message': 'File uploaded successfully', 'filename': filename}), 200
         else:
-            freq_table[word] = 1
+            return jsonify({'error': 'No file part in the request'}), 400
+    return render_template('upload.html')
 
-    sentences = sent_tokenize(text)
-    sentence_value = dict()
+# Route to transcribe audio
+@app.route('/transcribe', methods=['POST'])
+def transcribe_audio():
+    file_path = request.json.get('filename')
+    try:
+        # Read audio file
+        data = wavfile.read(file_path)
+        framerate = data[0]
+        sounddata = data[1]
+        input_audio, _ = librosa.load(file_path, sr=16000)
+        input_values = tokenizer(input_audio, return_tensors="pt").input_values
 
-    for sentence in sentences:
-        for word, freq in freq_table.items():
-            if word in sentence.lower():
-                if sentence in sentence_value:
-                    sentence_value[sentence] += freq
-                else:
-                    sentence_value[sentence] = freq
+        # Perform transcription
+        logits = model(input_values).logits
+        predicted_ids = torch.argmax(logits, dim=-1)
+        transcription = tokenizer.batch_decode(predicted_ids)[0]
 
-    sum_values = 0
-    for sentence in sentence_value:
-        sum_values += sentence_value[sentence]
+        # Return transcription result
+        response = jsonify({'transcription': transcription})
+        response.headers.add('Access-Control-Allow-Origin', '*')  # Set CORS headers
+        return response, 200
 
-    average = int(sum_values / len(sentence_value))
-
-    summary = ''
-    for sentence in sentences:
-        if (sentence in sentence_value) and (sentence_value[sentence] > (1.2 * average)):
-            summary += " " + sentence
-
-    return summary
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/upload', methods=['POST'])
-def upload():
-    if 'file' not in request.files:
-        return redirect(request.url)
-
-    file = request.files['file']
-    if file.filename == '':
-        return redirect(request.url)
-
-    if file:
-        # Save the uploaded file to the configured upload folder
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-        file.save(file_path)
-
-        # Convert MP3 to WAV
-        wav_file = convert_mp3_to_wav("uploads/marketplace.mp3")
-
-        # Perform speech recognition
-        recognizer = sr.Recognizer()
-        try:
-            with sr.AudioFile(file_path) as source:
-                audio_data = recognizer.record(source)
-            text = recognizer.recognize_google(audio_data)
-            summary = summarize_text(text)
-            return render_template('result.html', original_text=text, summary=summary)
-        except sr.UnknownValueError:
-            return "Google Speech Recognition could not understand the audio"
-        except sr.RequestError as e:
-            return f"Could not request results from Google Speech Recognition service; {e}"
-        except Exception as e:
-            return f"Error processing audio: {e}"
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
