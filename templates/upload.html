@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Upload and Transcription</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        .container {
+            text-align: center;
+            max-width: 600px;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        form {
+            margin-bottom: 20px;
+        }
+        #transcriptionResult {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Audio Upload and Transcription</h1>
+        
+        <form id="uploadForm" enctype="multipart/form-data">
+            <input type="file" name="file" id="audioFile">
+            <button type="button" onclick="uploadAudio()">Upload File</button>
+        </form>
+
+        <div id="transcriptionResult"></div>
+    </div>
+
+    <script>
+        function uploadAudio() {
+            var form = document.getElementById("uploadForm");
+            var formData = new FormData(form);
+
+            fetch('http://localhost:5000/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('File uploaded successfully:', data.filename);
+
+                // Call transcription endpoint with uploaded filename
+                transcribeAudio(data.filename);
+            })
+            .catch(error => {
+                console.error('Error uploading file:', error);
+            });
+        }
+
+        function transcribeAudio(filename) {
+            fetch('http://localhost:5000/transcribe', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    filename: filename
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Transcription:', data.transcription);
+                document.getElementById("transcriptionResult").innerHTML = '<h3>Transcription:</h3><p>' + data.transcription + '</p>';
+            })
+            .catch(error => {
+                console.error('Error transcribing audio:', error);
+            });
+        }
+    </script>
+</body>
+</html>
